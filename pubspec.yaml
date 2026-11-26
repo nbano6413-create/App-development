@@ -1,0 +1,39 @@
+name: untitled2
+description: "My Docverter: PDF Converter — Complete Functional Implementation"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.14.0
+
+dependencies:
+  archive: ^4.0.7
+  syncfusion_flutter_xlsio: ^35.2.12
+  file: ^7.0.1
+  syncfusion_flutter_pdf: ^35.2.12
+  flutter:
+    sdk: flutter
+  material_ui: ^1.1.0
+  cupertino_icons: ^1.0.8
+  pdf: ^3.11.1
+  printing: ^5.13.2
+  image: ^4.3.0
+  path_provider: ^2.1.4
+  open_file: ^3.5.10
+  share_plus: ^10.1.0
+  file_picker: ^10.3.6
+  google_mlkit_text_recognition: ^1.0.3
+  google_mobile_ads: ^9.2.0
+  xml: ^7.1.0
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/app_logo.png
