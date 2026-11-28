@@ -1,3 +1,4 @@
+
 name: untitled2
 description: "My Docverter: PDF Converter — Complete Functional Implementation"
 publish_to: 'none'
@@ -21,19 +22,31 @@ dependencies:
   image: ^4.3.0
   path_provider: ^2.1.4
   open_file: ^3.5.10
-  share_plus: ^10.1.0
+  share_plus: ^12.0.2
   file_picker: ^10.3.6
   google_mlkit_text_recognition: ^1.0.3
   google_mobile_ads: ^9.2.0
   xml: ^7.1.0
-
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
 
+  flutter_native_splash: ^2.4.6
+
 flutter:
   uses-material-design: true
+
   assets:
     - assets/images/app_logo.png
+
+
+flutter_native_splash:
+  color: "#7C4DFF"
+  color_dark: "#7C4DFF"
+
+  android_12:
+    color: "#7C4DFF"
+    color_dark: "#7C4DFF"

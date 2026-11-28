@@ -7,6 +7,6 @@ void main() {
     await tester.pumpWidget(const MyDocverterApp());
 
     // Verify app title or home screen text is present.
-    expect(find.text('My Docverter: PDF\nConverter'), findsOneWidget);
+    expect(find.text('My Docverter'), findsOneWidget);
   });
 }

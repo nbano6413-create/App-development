@@ -1,4 +1,6 @@
 
+import 'dart:async';
+
 import 'package:google_mobile_ads/google_mobile_ads.dart' hide AppState;
 import 'package:material_ui/material_ui.dart';
 
@@ -24,59 +26,131 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final TextEditingController _searchController =
-  TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
 
   int _currentBottomNavIndex = 0;
 
   BannerAd? _bannerAd;
   bool _isBannerAdLoaded = false;
+  bool _isBannerLoading = false;
+  int _bannerRetryCount = 0;
 
   NativeAd? _nativeAd;
   bool _isNativeAdLoaded = false;
+  bool _isNativeLoading = false;
+  int _nativeRetryCount = 0;
+
+  static const int _maxAdRetries = 3;
 
   @override
   void initState() {
     super.initState();
-    _loadBannerAd();
-    _loadNativeAd();
+    _initializeAndLoadAds();
   }
 
-  // TEMPORARY: Open Google Mobile Ads Ad Inspector
-  Future<void> _openAdInspector() async {
+  // ---------------- INITIALIZE ADS ----------------
+
+  Future<void> _initializeAndLoadAds() async {
+    if (AdService.instance.isPremium) return;
+
     try {
-      MobileAds.instance.openAdInspector((error) {
-        if (error != null) {
-          debugPrint('Ad Inspector Error: ${error.message}');
-        } else {
-          debugPrint('Ad Inspector closed successfully');
-        }
-      });
+      await AdService.instance.initialize();
+
+      if (!mounted || AdService.instance.isPremium) return;
+
+      _loadBannerAd();
+      _loadNativeAd();
     } catch (e) {
-      debugPrint('Unable to open Ad Inspector: $e');
+      debugPrint('Ad initialization failed: $e');
     }
   }
 
-  // Load Banner Ad
-  void _loadBannerAd() {
-    if (AdService.instance.isPremium) return;
+  // ---------------- BANNER AD ----------------
 
-    _bannerAd = AdService.instance.createHomeBannerAd(
+  void _loadBannerAd() {
+    if (!mounted ||
+        AdService.instance.isPremium ||
+        _isBannerLoading ||
+        _bannerAd != null) {
+      return;
+    }
+
+    _isBannerLoading = true;
+    _isBannerAdLoaded = false;
+
+    final banner = AdService.instance.createHomeBannerAd(
       onAdLoaded: () {
         if (!mounted) return;
+
+        _isBannerLoading = false;
+        _bannerRetryCount = 0;
 
         setState(() {
           _isBannerAdLoaded = true;
         });
+
+        debugPrint('Home Banner loaded successfully');
+      },
+      onAdFailed: () {
+        _isBannerLoading = false;
+
+        if (!mounted) return;
+
+        setState(() {
+          _isBannerAdLoaded = false;
+          _bannerAd = null;
+        });
+
+        _retryBannerAd();
       },
     );
+
+    if (banner == null) {
+      _isBannerLoading = false;
+      _retryBannerAd();
+      return;
+    }
+
+    _bannerAd = banner;
   }
 
-  // Load Native Ad
-  void _loadNativeAd() {
-    if (AdService.instance.isPremium) return;
+  void _retryBannerAd() {
+    if (!mounted ||
+        AdService.instance.isPremium ||
+        _bannerRetryCount >= _maxAdRetries) {
+      debugPrint('Banner retry limit reached');
+      return;
+    }
 
-    _nativeAd = NativeAd(
+    _bannerRetryCount++;
+
+    final delay = Duration(seconds: 6 * _bannerRetryCount);
+
+    debugPrint(
+      'Retrying Banner Ad in ${delay.inSeconds} seconds',
+    );
+
+    Future.delayed(delay, () {
+      if (mounted && !AdService.instance.isPremium) {
+        _loadBannerAd();
+      }
+    });
+  }
+
+  // ---------------- NATIVE AD ----------------
+
+  void _loadNativeAd() {
+    if (!mounted ||
+        AdService.instance.isPremium ||
+        _isNativeLoading ||
+        _nativeAd != null) {
+      return;
+    }
+
+    _isNativeLoading = true;
+    _isNativeAdLoaded = false;
+
+    final nativeAd = NativeAd(
       adUnitId: AdService.nativeAdUnitId,
       factoryId: 'listTile',
       request: const AdRequest(),
@@ -87,35 +161,77 @@ class _HomeScreenState extends State<HomeScreen> {
             return;
           }
 
+          _isNativeLoading = false;
+          _nativeRetryCount = 0;
+
           setState(() {
+            _nativeAd = ad as NativeAd;
             _isNativeAdLoaded = true;
           });
 
-          debugPrint('Native Ad Loaded Successfully');
+          debugPrint('Native Ad loaded successfully');
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
 
-          if (mounted) {
-            setState(() {
-              _nativeAd = null;
-              _isNativeAdLoaded = false;
-            });
-          }
+          _isNativeLoading = false;
 
-          debugPrint('Native Ad failed to load: $error');
+          if (!mounted) return;
+
+          setState(() {
+            _nativeAd = null;
+            _isNativeAdLoaded = false;
+          });
+
+          debugPrint(
+            'Native Ad failed: ${error.code} - ${error.message}',
+          );
+
+          _retryNativeAd();
         },
       ),
-    )..load();
+    );
+
+    _nativeAd = nativeAd;
+    nativeAd.load();
   }
+
+  void _retryNativeAd() {
+    if (!mounted ||
+        AdService.instance.isPremium ||
+        _nativeRetryCount >= _maxAdRetries) {
+      debugPrint('Native Ad retry limit reached');
+      return;
+    }
+
+    _nativeRetryCount++;
+
+    final delay = Duration(seconds: 6 * _nativeRetryCount);
+
+    debugPrint(
+      'Retrying Native Ad in ${delay.inSeconds} seconds',
+    );
+
+    Future.delayed(delay, () {
+      if (mounted && !AdService.instance.isPremium) {
+        _loadNativeAd();
+      }
+    });
+  }
+
+  // ---------------- DISPOSE ----------------
 
   @override
   void dispose() {
     _searchController.dispose();
+
     _bannerAd?.dispose();
     _nativeAd?.dispose();
+
     super.dispose();
   }
+
+  // ---------------- NAVIGATION ----------------
 
   void _navigateToTool(PdfTool tool) {
     Navigator.push(
@@ -139,6 +255,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  // ---------------- MAIN BUILD ----------------
 
   @override
   Widget build(BuildContext context) {
@@ -211,6 +329,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ---------------- HOME TAB ----------------
+
   Widget _buildHomeTab(bool isDark) {
     final searchQuery =
     widget.appState.searchQuery.trim().toLowerCase();
@@ -231,20 +351,22 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildHeader(isDark),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
 
-          // TEMPORARY Ad Inspector button
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: _openAdInspector,
-              icon: const Icon(Icons.bug_report_outlined),
-              label: const Text('Ad Inspector'),
-            ),
-          ),
-
-          const SizedBox(height: 8),
           _buildSearchBar(isDark),
+
+          // Banner Ad below Search Bar
+          if (_isBannerAdLoaded && _bannerAd != null) ...[
+            const SizedBox(height: 16),
+            Center(
+              child: SizedBox(
+                width: _bannerAd!.size.width.toDouble(),
+                height: _bannerAd!.size.height.toDouble(),
+                child: AdWidget(ad: _bannerAd!),
+              ),
+            ),
+          ],
+
           const SizedBox(height: 20),
 
           if (searchQuery.isNotEmpty) ...[
@@ -312,6 +434,13 @@ class _HomeScreenState extends State<HomeScreen> {
               category: ToolCategory.popular,
               isDark: isDark,
             ),
+
+            // Native Ad below Popular Tools
+            if (_isNativeAdLoaded && _nativeAd != null) ...[
+              const SizedBox(height: 20),
+              _buildNativeAdCard(isDark),
+            ],
+
             const SizedBox(height: 24),
 
             _buildCategorySection(
@@ -324,78 +453,6 @@ class _HomeScreenState extends State<HomeScreen> {
               category: ToolCategory.security,
               isDark: isDark,
             ),
-
-            if (_isNativeAdLoaded && _nativeAd != null) ...[
-              const SizedBox(height: 24),
-              Container(
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? AppTheme.darkSurface
-                      : Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: AppTheme.cardShadow,
-                  border: Border.all(
-                    color: AppTheme.primaryPurple.withValues(
-                      alpha: 0.3,
-                    ),
-                    width: 1,
-                  ),
-                ),
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment:
-                      MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          child: Text(
-                            'Sponsored',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: AppTheme.primaryPurple,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color:
-                            AppTheme.primaryPurple.withValues(
-                              alpha: 0.1,
-                            ),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text(
-                            'Ad',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: AppTheme.primaryPurple,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    SizedBox(
-                      height: 250,
-                      child: AdWidget(ad: _nativeAd!),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-
             const SizedBox(height: 24),
 
             _buildCategorySection(
@@ -404,22 +461,78 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
 
-          if (_isBannerAdLoaded && _bannerAd != null) ...[
-            const SizedBox(height: 24),
-            Center(
-              child: SizedBox(
-                width: _bannerAd!.size.width.toDouble(),
-                height: _bannerAd!.size.height.toDouble(),
-                child: AdWidget(ad: _bannerAd!),
-              ),
-            ),
-          ],
-
           const SizedBox(height: 30),
         ],
       ),
     );
   }
+
+  // ---------------- NATIVE AD CARD ----------------
+
+  Widget _buildNativeAdCard(bool isDark) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.darkSurface : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: AppTheme.cardShadow,
+        border: Border.all(
+          color: AppTheme.primaryPurple.withValues(alpha: 0.3),
+          width: 1,
+        ),
+      ),
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                child: Text(
+                  'Sponsored',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.primaryPurple,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryPurple.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  'Ad',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.primaryPurple,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 330,
+            width: double.infinity,
+            child: AdWidget(ad: _nativeAd!),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------- HEADER ----------------
 
   Widget _buildHeader(bool isDark) {
     return Row(
@@ -494,6 +607,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ---------------- SEARCH BAR ----------------
+
   Widget _buildSearchBar(bool isDark) {
     return Container(
       decoration: BoxDecoration(
@@ -547,6 +662,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ---------------- PREMIUM BANNER ----------------
+
   Widget _buildPremiumBanner(bool isDark) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -571,7 +688,7 @@ class _HomeScreenState extends State<HomeScreen> {
               shape: BoxShape.circle,
             ),
             child: const Icon(
-              Icons.workspace_premium_rounded,
+              Icons.picture_as_pdf_rounded,
               color: Colors.white,
               size: 32,
             ),
@@ -582,7 +699,7 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Upgrade to Premium',
+                  'All-in-One PDF Tools',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 17,
@@ -591,7 +708,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'Unlimited PDF conversions & zero ads.',
+                  'Convert, edit and manage your PDF documents.',
                   style: TextStyle(
                     color: Colors.white70,
                     fontSize: 13,
@@ -604,6 +721,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  // ---------------- CATEGORY SECTION ----------------
 
   Widget _buildCategorySection({
     required ToolCategory category,
@@ -690,6 +809,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ---------------- CATEGORY BOTTOM SHEET ----------------
+
   void _showAllCategoryToolsBottomSheet(ToolCategory category) {
     final categoryTools = ToolsData.allTools
         .where((t) => t.category == category)
@@ -706,9 +827,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return Container(
           height: MediaQuery.of(ctx).size.height * 0.65,
           decoration: BoxDecoration(
-            color: isDark
-                ? AppTheme.darkSurface
-                : Colors.white,
+            color: isDark ? AppTheme.darkSurface : Colors.white,
             borderRadius: const BorderRadius.vertical(
               top: Radius.circular(28),
             ),
@@ -764,7 +883,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // History Tab
+  // ---------------- HISTORY TAB ----------------
+
   Widget _buildHistoryTab(bool isDark) {
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -816,13 +936,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Premium Tab
+  // ---------------- PREMIUM TAB ----------------
+
   Widget _buildPremiumTab(bool isDark) {
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           const SizedBox(height: 30),
+
           Container(
             padding: const EdgeInsets.all(20),
             decoration: const BoxDecoration(
@@ -835,42 +958,83 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.white,
             ),
           ),
+
           const SizedBox(height: 20),
+
           const Text(
-            'My Docverter Premium',
+            'My Docverter',
+            textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Unlock fast offline PDF tools, batch conversions, and ad-free experience.',
+
+          const SizedBox(height: 12),
+
+          Text(
+            'Enjoy PDF tools for managing and converting your documents.',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.grey,
-              fontSize: 14,
+              fontSize: 15,
+              color: isDark
+                  ? AppTheme.textSecondaryDark
+                  : AppTheme.textSecondaryLight,
             ),
           ),
-          const SizedBox(height: 40),
-          ElevatedButton(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'You already have full offline access!',
+
+          const SizedBox(height: 30),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: isDark ? AppTheme.darkSurface : Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: AppTheme.cardShadow,
+            ),
+            child: Column(
+              children: [
+                const Icon(
+                  Icons.info_outline_rounded,
+                  color: AppTheme.primaryPurple,
+                  size: 35,
+                ),
+                const SizedBox(height: 12),
+
+                const Text(
+                  'All available tools',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
                   ),
                 ),
-              );
-            },
-            child: const Text('GET PREMIUM ACCESS'),
+
+                const SizedBox(height: 10),
+
+                Text(
+                  'Premium purchases are not currently available. '
+                      'All currently available PDF tools can be accessed '
+                      'from the Home screen.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: isDark
+                        ? AppTheme.textSecondaryDark
+                        : AppTheme.textSecondaryLight,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  // More / Settings Tab
+  // ---------------- MORE / SETTINGS TAB ----------------
+
   Widget _buildMoreTab(bool isDark) {
     return SettingsScreen(appState: widget.appState);
   }

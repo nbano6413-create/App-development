@@ -1,21 +1,29 @@
+
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import 'providers/app_state.dart';
-import 'screens/home_screen.dart';
+import 'screens/splash_screen.dart';
 import 'services/ad_service.dart';
 import 'theme/app_theme.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
+  runApp(const MyDocverterApp());
+
+  // Initialize Google Test Ads in the background.
+  unawaited(_initializeAds());
+}
+
+Future<void> _initializeAds() async {
   try {
     await AdService.instance.initialize();
-    debugPrint('AdMob initialized successfully before runApp');
+    debugPrint('Google Mobile Ads initialized successfully');
   } catch (e) {
     debugPrint('AdMob initialization error: $e');
   }
-
-  runApp(const MyDocverterApp());
 }
 
 class MyDocverterApp extends StatefulWidget {
@@ -54,7 +62,7 @@ class _MyDocverterAppState extends State<MyDocverterApp> {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: _appState.themeMode,
-      home: HomeScreen(
+      home: SplashScreen(
         appState: _appState,
       ),
     );

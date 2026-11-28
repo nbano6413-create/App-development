@@ -1,7 +1,10 @@
+
 import 'dart:io';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:open_file/open_file.dart';
 import 'package:share_plus/share_plus.dart';
+
 import '../theme/app_theme.dart';
 import 'result_screen.dart';
 
@@ -19,13 +22,18 @@ class MergeResultScreen extends StatelessWidget {
 
   Future<String> _getFileSizeString(File file) async {
     final bytes = await file.length();
+
     if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(2)} KB';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(2)} KB';
+    }
+
     return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
   }
 
   Future<void> _openFolder(BuildContext context) async {
     final dirPath = outputPdfFile.parent.path;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Folder path: $dirPath'),
@@ -33,6 +41,7 @@ class MergeResultScreen extends StatelessWidget {
         behavior: SnackBarBehavior.floating,
       ),
     );
+
     await OpenFile.open(dirPath);
   }
 
@@ -49,8 +58,14 @@ class MergeResultScreen extends StatelessWidget {
     );
   }
 
+  // Updated share_plus API
   Future<void> _shareFile() async {
-    await Share.shareXFiles([XFile(outputPdfFile.path)], text: 'Check out my merged PDF from My Docverter');
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(outputPdfFile.path)],
+        text: 'Check out my merged PDF from My Docverter',
+      ),
+    );
   }
 
   void _goToHome(BuildContext context) {
@@ -59,19 +74,25 @@ class MergeResultScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isDark =
+        Theme.of(context).brightness == Brightness.dark;
+
     final fileName = outputPdfFile.uri.pathSegments.last;
 
     return Scaffold(
-      backgroundColor: isDark ? AppTheme.darkBg : AppTheme.lightBg,
+      backgroundColor:
+      isDark ? AppTheme.darkBg : AppTheme.lightBg,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 20,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const SizedBox(height: 20),
-              // Green Checkmark Icon
+
               Container(
                 width: 60,
                 height: 60,
@@ -85,7 +106,9 @@ class MergeResultScreen extends StatelessWidget {
                   size: 52,
                 ),
               ),
+
               const SizedBox(height: 16),
+
               const Text(
                 'PDFs merged successfully!',
                 style: TextStyle(
@@ -94,52 +117,77 @@ class MergeResultScreen extends StatelessWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
+
               const SizedBox(height: 8),
+
               Text(
                 'Your file has been saved successfully.',
                 style: TextStyle(
                   fontSize: 15,
-                  color: isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight,
+                  color: isDark
+                      ? AppTheme.textSecondaryDark
+                      : AppTheme.textSecondaryLight,
                 ),
                 textAlign: TextAlign.center,
               ),
+
               const SizedBox(height: 30),
 
-              // White Metadata Card
               Container(
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
-                  color: isDark ? AppTheme.darkSurface : Colors.white,
+                  color: isDark
+                      ? AppTheme.darkSurface
+                      : Colors.white,
                   borderRadius: BorderRadius.circular(24),
                   boxShadow: AppTheme.cardShadow,
                 ),
                 child: Column(
                   children: [
-                    _buildMetaRow('Total PDFs:', '$totalPdfs'),
+                    _buildMetaRow(
+                      'Total PDFs:',
+                      '$totalPdfs',
+                    ),
+
                     const SizedBox(height: 16),
-                    _buildMetaRow('Total Pages:', '$totalPages'),
+
+                    _buildMetaRow(
+                      'Total Pages:',
+                      '$totalPages',
+                    ),
+
                     const SizedBox(height: 16),
+
                     FutureBuilder<String>(
                       future: _getFileSizeString(outputPdfFile),
                       builder: (context, snapshot) {
-                        return _buildMetaRow('File Size:', snapshot.data ?? 'Calculing...');
+                        return _buildMetaRow(
+                          'File Size:',
+                          snapshot.data ?? 'Calculating...',
+                        );
                       },
                     ),
+
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 16),
                       child: Divider(height: 1),
                     ),
+
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
                         'File Name:',
                         style: TextStyle(
                           fontSize: 14,
-                          color: isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight,
+                          color: isDark
+                              ? AppTheme.textSecondaryDark
+                              : AppTheme.textSecondaryLight,
                         ),
                       ),
                     ),
+
                     const SizedBox(height: 6),
+
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
@@ -156,9 +204,9 @@ class MergeResultScreen extends StatelessWidget {
                   ],
                 ),
               ),
+
               const SizedBox(height: 36),
 
-              // OPEN FOLDER Button (Filled Purple)
               SizedBox(
                 width: double.infinity,
                 height: 54,
@@ -167,7 +215,9 @@ class MergeResultScreen extends StatelessWidget {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryPurple,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
                     elevation: 3,
                   ),
                   child: const Text(
@@ -180,17 +230,22 @@ class MergeResultScreen extends StatelessWidget {
                   ),
                 ),
               ),
+
               const SizedBox(height: 16),
 
-              // VIEW FILE Button (Outlined Purple)
               SizedBox(
                 width: double.infinity,
                 height: 54,
                 child: OutlinedButton(
                   onPressed: () => _viewFile(context),
                   style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AppTheme.primaryPurple, width: 1.5),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    side: const BorderSide(
+                      color: AppTheme.primaryPurple,
+                      width: 1.5,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
                   ),
                   child: const Text(
                     'VIEW FILE',
@@ -203,17 +258,22 @@ class MergeResultScreen extends StatelessWidget {
                   ),
                 ),
               ),
+
               const SizedBox(height: 16),
 
-              // SHARE FILE Button (Outlined Purple)
               SizedBox(
                 width: double.infinity,
                 height: 54,
                 child: OutlinedButton(
                   onPressed: _shareFile,
                   style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AppTheme.primaryPurple, width: 1.5),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    side: const BorderSide(
+                      color: AppTheme.primaryPurple,
+                      width: 1.5,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
                   ),
                   child: const Text(
                     'SHARE FILE',
@@ -226,9 +286,9 @@ class MergeResultScreen extends StatelessWidget {
                   ),
                 ),
               ),
+
               const SizedBox(height: 24),
 
-              // GO TO HOME text button
               TextButton(
                 onPressed: () => _goToHome(context),
                 child: const Text(
@@ -241,6 +301,7 @@ class MergeResultScreen extends StatelessWidget {
                   ),
                 ),
               ),
+
               const SizedBox(height: 20),
             ],
           ),

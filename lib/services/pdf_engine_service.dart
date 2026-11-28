@@ -1,4 +1,3 @@
-
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -20,6 +19,30 @@ import 'package:xml/xml.dart';
 /// Page-image operations rasterize pages and do not preserve selectable text.
 /// Word/PDF and Excel/PDF conversions extract basic text/cells, not full layout.
 /// PDF-to-PowerPoint creates image-based slides. editPdf overlays text.
+class WordPdfOptions {
+  final bool originalDocument;
+  final String fontFamily;
+  final double fontSize;
+  final double lineSpacing;
+  final String paragraphSpacing;
+  final String pageSize;
+  final String margin;
+  final String alignment;
+
+  const WordPdfOptions({
+    this.originalDocument = true,
+    this.fontFamily = 'Arial',
+    this.fontSize = 12,
+    this.lineSpacing = 1.15,
+    this.paragraphSpacing = 'Medium',
+    this.pageSize = 'A4',
+    this.margin = 'Normal',
+    this.alignment = 'Original Document',
+  });
+}
+
+
+
 class PdfEngineService {
   static Future<File> _outputFile(String prefix, String extension) async {
     final dir = await getTemporaryDirectory();
@@ -512,23 +535,13 @@ class PdfEngineService {
     }
   }
 
-  // 8. Word (DOCX) to PDF.
-
-  // 8. Word (DOCX) to PDF.
-  // Supports basic paragraphs, headings, alignment and tables.
-  // Legacy .doc files must be saved as .docx first.
-
-  static Future<Map<String, dynamic>> wordToPdf(
-      String filePath,
-      ) async {
+  // 8. Word (DOCX) to PDF — Advanced OpenXML Parser Engine.
+  static Future<Map<String, dynamic>> wordToPdf(String filePath) async {
     final lowerPath = filePath.toLowerCase();
 
-    if (lowerPath.endsWith('.doc') &&
-        !lowerPath.endsWith('.docx')) {
+    if (lowerPath.endsWith('.doc') && !lowerPath.endsWith('.docx')) {
       throw Exception(
-        'Legacy .doc format is not supported. '
-            'Please open the file in Word or WPS Office '
-            'and save it as .docx.',
+        'Legacy .doc format is not supported. Please open the file in Word or WPS Office and save it as .docx.',
       );
     }
 
@@ -541,21 +554,187 @@ class PdfEngineService {
       final archive = ZipDecoder().decodeBytes(bytes);
 
       final docFile = archive.findFile('word/document.xml');
-
       if (docFile == null) {
-        throw Exception(
-          'Invalid DOCX file. document.xml is missing.',
-        );
+        throw Exception('Invalid DOCX file. document.xml is missing.');
       }
 
-      final xml = XmlDocument.parse(
-        utf8.decode(docFile.content as List<int>),
-      );
+      // Parse relationships to locate media, headers, footers, etc.
+      final Map<String, String> relationships = {};
+      final relsFile = archive.findFile('word/_rels/document.xml.rels');
+      if (relsFile != null) {
+        try {
+          final relsXml = XmlDocument.parse(utf8.decode(relsFile.content as List<int>));
+          for (final rel in relsXml.findAllElements('Relationship')) {
+            final id = rel.getAttribute('Id');
+            final target = rel.getAttribute('Target');
+            if (id != null && target != null) {
+              relationships[id] = target;
+            }
+          }
+        } catch (_) {}
+      }
 
+      // Parse styles (word/styles.xml)
+      final Map<String, Map<String, dynamic>> styleMap = {};
+      final stylesFile = archive.findFile('word/styles.xml');
+      if (stylesFile != null) {
+        try {
+          final stylesXml = XmlDocument.parse(utf8.decode(stylesFile.content as List<int>));
+          for (final style in stylesXml.findAllElements('w:style')) {
+            final styleId = style.getAttribute('w:styleId');
+            if (styleId != null) {
+              final rPr = style.findElements('w:rPr').firstOrNull;
+              final pPr = style.findElements('w:pPr').firstOrNull;
+              
+              double? fontSize;
+              final sz = rPr?.findElements('w:sz').firstOrNull?.getAttribute('w:val');
+              if (sz != null) {
+                fontSize = (double.tryParse(sz) ?? 22) / 2.0;
+              }
+
+              bool isBold = rPr?.findElements('w:b').isNotEmpty ?? false;
+              bool isItalic = rPr?.findElements('w:i').isNotEmpty ?? false;
+              
+              String? color;
+              final col = rPr?.findElements('w:color').firstOrNull?.getAttribute('w:val');
+              if (col != null && col != 'auto') color = col;
+
+              double spaceBefore = 0;
+              double spaceAfter = 3;
+              final spacing = pPr?.findElements('w:spacing').firstOrNull;
+              if (spacing != null) {
+                final b = double.tryParse(spacing.getAttribute('w:before') ?? '');
+                if (b != null) spaceBefore = b / 20.0;
+                final a = double.tryParse(spacing.getAttribute('w:after') ?? '');
+                if (a != null) spaceAfter = a / 20.0;
+              }
+
+              styleMap[styleId] = {
+                'fontSize': fontSize,
+                'isBold': isBold,
+                'isItalic': isItalic,
+                'color': color,
+                'spaceBefore': spaceBefore,
+                'spaceAfter': spaceAfter,
+              };
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Parse numbering (word/numbering.xml)
+      final Map<String, String> numberingMap = {};
+      final numFile = archive.findFile('word/numbering.xml');
+      if (numFile != null) {
+        try {
+          final numXml = XmlDocument.parse(utf8.decode(numFile.content as List<int>));
+          for (final abstractNum in numXml.findAllElements('w:abstractNum')) {
+            final abstractNumId = abstractNum.getAttribute('w:abstractNumId');
+            final lvl = abstractNum.findElements('w:lvl').firstOrNull;
+            final numFmt = lvl?.findElements('w:numFmt').firstOrNull?.getAttribute('w:val');
+            if (abstractNumId != null) {
+              if (numFmt == 'bullet') {
+                numberingMap[abstractNumId] = '• ';
+              } else if (numFmt == 'decimal') {
+                numberingMap[abstractNumId] = '1. ';
+              } else {
+                numberingMap[abstractNumId] = '• ';
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Parse word/document.xml
+      final xml = XmlDocument.parse(utf8.decode(docFile.content as List<int>));
       final body = xml.findAllElements('w:body').firstOrNull;
-
       if (body == null) {
         throw Exception('Invalid DOCX document body.');
+      }
+
+      // Parse section properties for page format, margins, headers, footers
+      PdfPageFormat pageFormat = PdfPageFormat.a4;
+      pw.EdgeInsets pageMargins = const pw.EdgeInsets.all(36);
+      String? headerRelId;
+      String? footerRelId;
+
+      final sectPr = body.findElements('w:sectPr').firstOrNull;
+      if (sectPr != null) {
+        final pgSz = sectPr.findElements('w:pgSz').firstOrNull;
+        if (pgSz != null) {
+          final wTwips = double.tryParse(pgSz.getAttribute('w:w') ?? '') ?? 11906;
+          final hTwips = double.tryParse(pgSz.getAttribute('w:h') ?? '') ?? 16838;
+          final orient = pgSz.getAttribute('w:orient') ?? 'portrait';
+
+          final widthPt = wTwips / 20.0;
+          final heightPt = hTwips / 20.0;
+
+          pageFormat = PdfPageFormat(widthPt, heightPt);
+          if (orient.toLowerCase() == 'landscape' && widthPt < heightPt) {
+            pageFormat = pageFormat.landscape;
+          }
+        }
+
+        final pgMar = sectPr.findElements('w:pgMar').firstOrNull;
+        if (pgMar != null) {
+          final top = (double.tryParse(pgMar.getAttribute('w:top') ?? '') ?? 1440) / 20.0;
+          final right = (double.tryParse(pgMar.getAttribute('w:right') ?? '') ?? 1440) / 20.0;
+          final bottom = (double.tryParse(pgMar.getAttribute('w:bottom') ?? '') ?? 1440) / 20.0;
+          final left = (double.tryParse(pgMar.getAttribute('w:left') ?? '') ?? 1440) / 20.0;
+
+          pageMargins = pw.EdgeInsets.fromLTRB(left, top, right, bottom);
+        }
+
+        final headerRef = sectPr.findElements('w:headerReference').firstOrNull;
+        if (headerRef != null) {
+          headerRelId = headerRef.getAttribute('r:id');
+        }
+        final footerRef = sectPr.findElements('w:footerReference').firstOrNull;
+        if (footerRef != null) {
+          footerRelId = footerRef.getAttribute('r:id');
+        }
+      }
+
+      // Resolve header widgets if available
+      pw.Widget? headerWidget;
+      if (headerRelId != null && relationships.containsKey(headerRelId)) {
+        var hTarget = relationships[headerRelId]!;
+        if (!hTarget.startsWith('word/')) hTarget = 'word/$hTarget';
+        final hFile = archive.findFile(hTarget);
+        if (hFile != null) {
+          try {
+            final hXml = XmlDocument.parse(utf8.decode(hFile.content as List<int>));
+            final hWidgets = <pw.Widget>[];
+            for (final p in hXml.findAllElements('w:p')) {
+              final pwW = _parseParagraph(p, archive, relationships, styleMap, numberingMap);
+              if (pwW != null) hWidgets.add(pwW);
+            }
+            if (hWidgets.isNotEmpty) {
+              headerWidget = pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: hWidgets);
+            }
+          } catch (_) {}
+        }
+      }
+
+      // Resolve footer widgets if available
+      pw.Widget? footerWidget;
+      if (footerRelId != null && relationships.containsKey(footerRelId)) {
+        var fTarget = relationships[footerRelId]!;
+        if (!fTarget.startsWith('word/')) fTarget = 'word/$fTarget';
+        final fFile = archive.findFile(fTarget);
+        if (fFile != null) {
+          try {
+            final fXml = XmlDocument.parse(utf8.decode(fFile.content as List<int>));
+            final fWidgets = <pw.Widget>[];
+            for (final p in fXml.findAllElements('w:p')) {
+              final pwW = _parseParagraph(p, archive, relationships, styleMap, numberingMap);
+              if (pwW != null) fWidgets.add(pwW);
+            }
+            if (fWidgets.isNotEmpty) {
+              footerWidget = pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: fWidgets);
+            }
+          } catch (_) {}
+        }
       }
 
       final widgets = <pw.Widget>[];
@@ -563,157 +742,51 @@ class PdfEngineService {
       for (final node in body.children) {
         if (node is! XmlElement) continue;
 
-        if (node.name.qualified == 'w:p') {
-          final paragraphText = node
-              .findAllElements('w:t')
-              .map(_elementText)
-              .join();
+        final tagName = node.name.qualified;
 
-          final properties = node
-              .findElements('w:pPr')
-              .firstOrNull;
-
-          final styleName = properties
-              ?.findElements('w:pStyle')
-              .firstOrNull
-              ?.getAttribute('w:val') ?? '';
-
-          final isHeading =
-              styleName.toLowerCase().contains('heading') ||
-                  styleName.toLowerCase().contains('title');
-
-          final isBold = node.findAllElements('w:b').any(
-                (element) => element.getAttribute('w:val') != '0',
-          );
-
-          final alignmentValue = properties
-              ?.findElements('w:jc')
-              .firstOrNull
-              ?.getAttribute('w:val');
-
-          final pw.TextAlign alignment;
-
-          switch (alignmentValue) {
-            case 'center':
-              alignment = pw.TextAlign.center;
-              break;
-            case 'right':
-              alignment = pw.TextAlign.right;
-              break;
-            case 'both':
-              alignment = pw.TextAlign.justify;
-              break;
-            default:
-              alignment = pw.TextAlign.left;
+        if (tagName == 'w:p') {
+          final pWidget = _parseParagraph(node, archive, relationships, styleMap, numberingMap);
+          if (pWidget != null) {
+            widgets.add(pWidget);
           }
-
-          if (paragraphText.trim().isNotEmpty) {
-            widgets.add(
-              pw.Padding(
-                padding: pw.EdgeInsets.only(
-                  bottom: isHeading ? 10 : 6,
-                ),
-                child: pw.Text(
-                  paragraphText,
-                  textAlign: alignment,
-                  style: pw.TextStyle(
-                    fontSize: isHeading ? 16 : 11,
-                    fontWeight: (isHeading || isBold)
-                        ? pw.FontWeight.bold
-                        : pw.FontWeight.normal,
-                    color: isHeading
-                        ? PdfColors.deepPurple
-                        : PdfColors.black,
-                  ),
-                ),
-              ),
-            );
-          }
-        } else if (node.name.qualified == 'w:tbl') {
-          final tableRows = <List<String>>[];
-
-          for (final tr in node.findElements('w:tr')) {
-            final rowCells = <String>[];
-
-            for (final tc in tr.findElements('w:tc')) {
-              final cellText = tc
-                  .findAllElements('w:t')
-                  .map(_elementText)
-                  .join()
-                  .trim();
-
-              rowCells.add(cellText);
-            }
-
-            if (rowCells.isNotEmpty) {
-              tableRows.add(rowCells);
-            }
-          }
-
-          if (tableRows.isNotEmpty) {
-            final columnCount = tableRows
-                .map((row) => row.length)
-                .reduce((a, b) => a > b ? a : b);
-
-            final normalizedRows = tableRows.map((row) {
-              return List<String>.generate(
-                columnCount,
-                    (index) => index < row.length ? row[index] : '',
-              );
-            }).toList();
-
-            widgets.add(
-              pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(vertical: 8),
-                child: pw.TableHelper.fromTextArray(
-                  data: normalizedRows,
-                  border: pw.TableBorder.all(
-                    color: PdfColors.grey500,
-                    width: 0.5,
-                  ),
-                  headerStyle: pw.TextStyle(
-                    fontSize: 9,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                  cellStyle: const pw.TextStyle(fontSize: 9),
-                  cellPadding: const pw.EdgeInsets.all(5),
-                ),
-              ),
-            );
+        } else if (tagName == 'w:tbl') {
+          final tWidget = _parseTable(node, archive, relationships, styleMap, numberingMap);
+          if (tWidget != null) {
+            widgets.add(tWidget);
           }
         }
       }
 
       if (widgets.isEmpty) {
-        throw Exception(
-          'No readable paragraphs or tables were found in this DOCX.',
-        );
+        throw Exception('No readable text, tables, or images were found in this DOCX.');
       }
 
       final pdf = pw.Document();
-
       pdf.addPage(
         pw.MultiPage(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(36),
+          pageFormat: pageFormat,
+          margin: pageMargins,
+          header: headerWidget != null ? (_) => headerWidget! : null,
+          footer: footerWidget != null
+              ? (_) => footerWidget!
+              : (context) => pw.Container(
+                    alignment: pw.Alignment.centerRight,
+                    child: pw.Text(
+                      '${context.pageNumber} / ${context.pagesCount}',
+                      style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
+                    ),
+                  ),
           build: (_) => widgets,
         ),
       );
 
       final output = await _outputFile('Word_To_PDF', 'pdf');
-
       final pdfBytes = await pdf.save();
-
-      await output.writeAsBytes(
-        pdfBytes,
-        flush: true,
-      );
+      await output.writeAsBytes(pdfBytes, flush: true);
 
       sf.PdfDocument? generatedPdf;
-
       try {
         generatedPdf = sf.PdfDocument(inputBytes: pdfBytes);
-
         return {
           'file': output,
           'pageCount': generatedPdf.pages.count,
@@ -726,6 +799,375 @@ class PdfEngineService {
     }
   }
 
+  // --- DOCX OpenXML Helper Parsers ---
+
+  static pw.Widget? _parseParagraph(
+    XmlElement pNode,
+    Archive archive,
+    Map<String, String> relationships,
+    Map<String, Map<String, dynamic>> styleMap,
+    Map<String, String> numberingMap,
+  ) {
+    final pPr = pNode.findElements('w:pPr').firstOrNull;
+
+    // Alignment
+    final jcVal = pPr?.findElements('w:jc').firstOrNull?.getAttribute('w:val')?.toLowerCase() ?? 'left';
+    pw.TextAlign alignment = pw.TextAlign.left;
+    if (jcVal == 'center') alignment = pw.TextAlign.center;
+    if (jcVal == 'right') alignment = pw.TextAlign.right;
+    if (jcVal == 'both' || jcVal == 'justify') alignment = pw.TextAlign.justify;
+
+    // Heading Style & Defaults from styleMap
+    final pStyle = pPr?.findElements('w:pStyle').firstOrNull?.getAttribute('w:val') ?? '';
+    final styleInfo = styleMap[pStyle] ?? {};
+
+    final isHeading = pStyle.toLowerCase().contains('heading') || pStyle.toLowerCase().contains('title');
+    double baseFontSize = (styleInfo['fontSize'] as double?) ?? (isHeading ? 16 : 11);
+    if (isHeading && baseFontSize == 11) {
+      if (pStyle.toLowerCase().contains('heading 1') || pStyle.toLowerCase().contains('title')) {
+        baseFontSize = 18;
+      } else if (pStyle.toLowerCase().contains('heading 2')) {
+        baseFontSize = 15;
+      } else if (pStyle.toLowerCase().contains('heading 3')) {
+        baseFontSize = 13;
+      }
+    }
+
+    bool styleBold = (styleInfo['isBold'] as bool?) ?? isHeading;
+    bool styleItalic = (styleInfo['isItalic'] as bool?) ?? false;
+
+    // Spacing
+    double spaceBefore = (styleInfo['spaceBefore'] as double?) ?? 0;
+    double spaceAfter = (styleInfo['spaceAfter'] as double?) ?? 3;
+    final spacing = pPr?.findElements('w:spacing').firstOrNull;
+    if (spacing != null) {
+      final beforeTwips = double.tryParse(spacing.getAttribute('w:before') ?? '');
+      if (beforeTwips != null) spaceBefore = beforeTwips / 20.0;
+
+      final afterTwips = double.tryParse(spacing.getAttribute('w:after') ?? '');
+      if (afterTwips != null) spaceAfter = afterTwips / 20.0;
+    }
+
+    // Indentation
+    double leftIndent = 0;
+    double rightIndent = 0;
+    final ind = pPr?.findElements('w:ind').firstOrNull;
+    if (ind != null) {
+      final leftTwips = double.tryParse(ind.getAttribute('w:left') ?? '');
+      if (leftTwips != null) leftIndent = leftTwips / 20.0;
+
+      final rightTwips = double.tryParse(ind.getAttribute('w:right') ?? '');
+      if (rightTwips != null) rightIndent = rightTwips / 20.0;
+    }
+
+    // Keep with next (for headings)
+    bool keepNext = pPr?.findElements('w:keepNext').isNotEmpty ?? false;
+    if (isHeading) keepNext = true;
+
+    // Check Bullet / Numbering
+    final numPr = pPr?.findElements('w:numPr').firstOrNull;
+    final isList = numPr != null;
+    String bulletSymbol = '• ';
+    if (isList) {
+      final numId = numPr.findElements('w:numId').firstOrNull?.getAttribute('w:val');
+      if (numId != null && numberingMap.containsKey(numId)) {
+        bulletSymbol = numberingMap[numId]!;
+      }
+    }
+
+    final inlineSpans = <pw.InlineSpan>[];
+    final childWidgets = <pw.Widget>[];
+    bool hasPageBreak = false;
+
+    if (isList) {
+      inlineSpans.add(
+        pw.TextSpan(
+          text: bulletSymbol,
+          style: pw.TextStyle(
+            fontSize: baseFontSize,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.black,
+          ),
+        ),
+      );
+    }
+
+    for (final child in pNode.children) {
+      if (child is! XmlElement) continue;
+
+      final name = child.name.qualified;
+
+      if (name == 'w:r') {
+        final rPr = child.findElements('w:rPr').firstOrNull;
+
+        final isBold = styleBold || (rPr?.findElements('w:b').isNotEmpty ?? false);
+        final isItalic = styleItalic || (rPr?.findElements('w:i').isNotEmpty ?? false);
+        final isUnderline = rPr?.findElements('w:u').isNotEmpty ?? false;
+        final isStrike = rPr?.findElements('w:strike').isNotEmpty ?? false;
+
+        double fontSize = baseFontSize;
+        final szVal = rPr?.findElements('w:sz').firstOrNull?.getAttribute('w:val');
+        if (szVal != null) {
+          final halfPts = double.tryParse(szVal);
+          if (halfPts != null) fontSize = halfPts / 2.0;
+        }
+
+        PdfColor textColor = isHeading ? PdfColors.deepPurple : PdfColors.black;
+        final colorVal = rPr?.findElements('w:color').firstOrNull?.getAttribute('w:val');
+        if (colorVal != null && colorVal != 'auto' && colorVal.length == 6) {
+          try {
+            final intVal = int.parse('FF$colorVal', radix: 16);
+            textColor = PdfColor.fromInt(intVal);
+          } catch (_) {}
+        } else if (styleInfo['color'] != null) {
+          try {
+            final colStr = styleInfo['color'] as String;
+            if (colStr.length == 6) {
+              textColor = PdfColor.fromInt(int.parse('FF$colStr', radix: 16));
+            }
+          } catch (_) {}
+        }
+
+        PdfColor? highlightBg;
+        final hlVal = rPr?.findElements('w:highlight').firstOrNull?.getAttribute('w:val')?.toLowerCase();
+        if (hlVal == 'yellow') highlightBg = PdfColors.yellow;
+        if (hlVal == 'green') highlightBg = PdfColors.lightGreen;
+        if (hlVal == 'cyan') highlightBg = PdfColors.lightBlue;
+
+        final textBuilder = StringBuffer();
+        for (final runChild in child.children) {
+          if (runChild is! XmlElement) continue;
+          final runName = runChild.name.qualified;
+          if (runName == 'w:t') {
+            textBuilder.write(runChild.innerText);
+          } else if (runName == 'w:br') {
+            final brType = runChild.getAttribute('w:type');
+            if (brType == 'page') {
+              hasPageBreak = true;
+            } else {
+              textBuilder.write('\n');
+            }
+          } else if (runName == 'w:drawing' || runName == 'w:pict') {
+            final imgWidget = _parseImageDrawing(runChild, archive, relationships);
+            if (imgWidget != null) {
+              childWidgets.add(imgWidget);
+            }
+          }
+        }
+
+        final runText = textBuilder.toString();
+        if (runText.isNotEmpty) {
+          inlineSpans.add(
+            pw.TextSpan(
+              text: runText,
+              style: pw.TextStyle(
+                fontSize: fontSize,
+                fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal,
+                fontStyle: isItalic ? pw.FontStyle.italic : pw.FontStyle.normal,
+                decoration: isUnderline
+                    ? pw.TextDecoration.underline
+                    : (isStrike ? pw.TextDecoration.lineThrough : null),
+                color: textColor,
+                background: highlightBg != null ? pw.BoxDecoration(color: highlightBg) : null,
+              ),
+            ),
+          );
+        }
+      } else if (name == 'w:drawing' || name == 'w:pict') {
+        final imgWidget = _parseImageDrawing(child, archive, relationships);
+        if (imgWidget != null) {
+          childWidgets.add(imgWidget);
+        }
+      }
+    }
+
+    if (inlineSpans.isEmpty && childWidgets.isEmpty && !hasPageBreak) {
+      return null;
+    }
+
+    final blockChildren = <pw.Widget>[];
+
+    if (hasPageBreak) {
+      blockChildren.add(pw.NewPage());
+    }
+
+    if (inlineSpans.isNotEmpty) {
+      pw.Widget paraWidget = pw.Padding(
+        padding: pw.EdgeInsets.only(top: spaceBefore, bottom: spaceAfter, left: leftIndent, right: rightIndent),
+        child: pw.RichText(
+          textAlign: alignment,
+          text: pw.TextSpan(children: inlineSpans),
+        ),
+      );
+
+      if (keepNext) {
+        paraWidget = pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [paraWidget],
+        );
+      }
+
+      blockChildren.add(paraWidget);
+    }
+
+    if (childWidgets.isNotEmpty) {
+      blockChildren.addAll(childWidgets);
+    }
+
+    if (blockChildren.length == 1) {
+      return blockChildren.first;
+    }
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: blockChildren,
+    );
+  }
+
+  static pw.Widget? _parseImageDrawing(
+    XmlElement drawNode,
+    Archive archive,
+    Map<String, String> relationships,
+  ) {
+    try {
+      final blips = drawNode.findAllElements('a:blip');
+      for (final blip in blips) {
+        final embedId = blip.getAttribute('r:embed') ?? blip.getAttribute('r:link');
+        if (embedId != null && relationships.containsKey(embedId)) {
+          var target = relationships[embedId]!;
+          if (!target.startsWith('word/')) {
+            target = 'word/$target';
+          }
+
+          final imageFile = archive.findFile(target);
+          if (imageFile != null) {
+            final imageBytes = imageFile.content as List<int>;
+            if (imageBytes.isNotEmpty) {
+              final memoryImage = pw.MemoryImage(Uint8List.fromList(imageBytes));
+              return pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(vertical: 8),
+                child: pw.Center(
+                  child: pw.ConstrainedBox(
+                    constraints: const pw.BoxConstraints(maxHeight: 280, maxWidth: 400),
+                    child: pw.Image(memoryImage, fit: pw.BoxFit.contain),
+                  ),
+                ),
+              );
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static pw.Widget? _parseTable(
+    XmlElement tblNode,
+    Archive archive,
+    Map<String, String> relationships,
+    Map<String, Map<String, dynamic>> styleMap,
+    Map<String, String> numberingMap,
+  ) {
+    final rows = <pw.TableRow>[];
+
+    // Parse column widths from w:tblGrid
+    final gridCols = tblNode.findAllElements('w:gridCol');
+    final List<double> columnWidths = [];
+    for (final col in gridCols) {
+      final wVal = double.tryParse(col.getAttribute('w:w') ?? '');
+      if (wVal != null && wVal > 0) {
+        columnWidths.add(wVal / 20.0);
+      }
+    }
+
+    for (final trNode in tblNode.findElements('w:tr')) {
+      final cellWidgets = <pw.Widget>[];
+
+      for (final tcNode in trNode.findElements('w:tc')) {
+        final tcPr = tcNode.findElements('w:tcPr').firstOrNull;
+
+        // Background Shading
+        PdfColor? cellBg;
+        final shd = tcPr?.findElements('w:shd').firstOrNull;
+        if (shd != null) {
+          final fillHex = shd.getAttribute('w:fill');
+          if (fillHex != null && fillHex != 'auto' && fillHex.length == 6) {
+            try {
+              final intVal = int.parse('FF$fillHex', radix: 16);
+              cellBg = PdfColor.fromInt(intVal);
+            } catch (_) {}
+          }
+        }
+
+        // Cell margins / padding
+        double tcTop = 4;
+        double tcBottom = 4;
+        double tcLeft = 6;
+        double tcRight = 6;
+        final tcMar = tcPr?.findElements('w:tcMar').firstOrNull;
+        if (tcMar != null) {
+          final topNode = tcMar.findElements('w:top').firstOrNull;
+          if (topNode != null) tcTop = (double.tryParse(topNode.getAttribute('w:w') ?? '') ?? 80) / 20.0;
+          final bottomNode = tcMar.findElements('w:bottom').firstOrNull;
+          if (bottomNode != null) tcBottom = (double.tryParse(bottomNode.getAttribute('w:w') ?? '') ?? 80) / 20.0;
+          final leftNode = tcMar.findElements('w:left').firstOrNull;
+          if (leftNode != null) tcLeft = (double.tryParse(leftNode.getAttribute('w:w') ?? '') ?? 120) / 20.0;
+          final rightNode = tcMar.findElements('w:right').firstOrNull;
+          if (rightNode != null) tcRight = (double.tryParse(rightNode.getAttribute('w:w') ?? '') ?? 120) / 20.0;
+        }
+
+        // Cell content
+        final cellContentWidgets = <pw.Widget>[];
+        for (final child in tcNode.children) {
+          if (child is XmlElement && child.name.qualified == 'w:p') {
+            final pW = _parseParagraph(child, archive, relationships, styleMap, numberingMap);
+            if (pW != null) {
+              cellContentWidgets.add(pW);
+            }
+          }
+        }
+
+        cellWidgets.add(
+          pw.Container(
+            padding: pw.EdgeInsets.fromLTRB(tcLeft, tcTop, tcRight, tcBottom),
+            decoration: pw.BoxDecoration(
+              color: cellBg,
+              border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+            ),
+            child: cellContentWidgets.isNotEmpty
+                ? pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: cellContentWidgets,
+                  )
+                : pw.SizedBox(height: 10),
+          ),
+        );
+      }
+
+      if (cellWidgets.isNotEmpty) {
+        rows.add(pw.TableRow(children: cellWidgets));
+      }
+    }
+
+    if (rows.isEmpty) return null;
+
+    Map<int, pw.TableColumnWidth>? columnWidthsMap;
+    if (columnWidths.isNotEmpty) {
+      columnWidthsMap = {};
+      for (var i = 0; i < columnWidths.length; i++) {
+        columnWidthsMap[i] = pw.FixedColumnWidth(columnWidths[i]);
+      }
+    }
+
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 8),
+      child: pw.Table(
+        border: pw.TableBorder.all(color: PdfColors.grey500, width: 0.5),
+        columnWidths: columnWidthsMap,
+        children: rows,
+      ),
+    );
+  }
 
   // Read basic values from the first XLSX worksheet.
   static List<List<String>> _readFirstWorksheet(Uint8List bytes) {
@@ -1130,7 +1572,7 @@ class PdfEngineService {
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="$rel/officeDocument" Target="ppt/presentation.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId2" Type="$rel/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
   <Relationship Id="rId3" Type="$rel/extended-properties" Target="docProps/app.xml"/>
 </Relationships>
 ''',

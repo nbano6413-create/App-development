@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.untitled2"
+    namespace = "com.sid.mydocverter.pdfconverter"
     compileSdk = 36
 
     compileOptions {
@@ -15,10 +15,10 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.untitled2"
-        minSdk = flutter.minSdkVersion
-        targetSdk = 34
-        versionCode = flutter.versionCode
+        applicationId = "com.sid.mydocverter.pdfconverter"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 2
         versionName = flutter.versionName
     }
 

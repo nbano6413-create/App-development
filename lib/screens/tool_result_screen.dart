@@ -43,6 +43,7 @@ class ToolResultScreen extends StatelessWidget {
     final bytes = await file.length();
 
     if (bytes < 1024) return '$bytes B';
+
     if (bytes < 1024 * 1024) {
       return '${(bytes / 1024).toStringAsFixed(2)} KB';
     }
@@ -106,10 +107,13 @@ class ToolResultScreen extends StatelessWidget {
     }
   }
 
+  // Updated share_plus 12.0.2 API
   Future<void> _shareFile() async {
-    await Share.shareXFiles(
-      [XFile(outputPdfFile.path)],
-      text: 'Check out my $toolName output from My Docverter',
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(outputPdfFile.path)],
+        text: 'Check out my $toolName output from My Docverter',
+      ),
     );
   }
 
@@ -285,7 +289,9 @@ class ToolResultScreen extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: isDark ? AppTheme.darkSurface : Colors.white,
+        color: isDark
+            ? AppTheme.darkSurface
+            : Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: AppTheme.cardShadow,
       ),
@@ -333,7 +339,9 @@ class ToolResultScreen extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 14,
                   height: 1.6,
-                  color: isDark ? Colors.white : Colors.black87,
+                  color: isDark
+                      ? Colors.white
+                      : Colors.black87,
                 ),
               );
             },
